@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "name": "viboplr-duplicate-finder-tests",
+  "description": "Test harness for the viboplr-duplicate-finder plugin (not published; the plugin itself is just index.js + manifest.json).",
+  "scripts": {
+    "test": "node --test"
+  }
+}
