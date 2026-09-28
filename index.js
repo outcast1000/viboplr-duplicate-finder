@@ -7,6 +7,49 @@
 // delete-with-confirmation flow via `api.ui.requestAction("delete-tracks")`, so
 // this plugin never re-implements trashing, queue cleanup, or "stop the playing
 // track" logic.
+function fmtBytes(n) {
+  if (!n || n <= 0) return "—";
+  if (n < 1024) return n + " B";
+  var kb = n / 1024;
+  if (kb < 1024) return kb.toFixed(0) + " KB";
+  var mb = kb / 1024;
+  if (mb < 1024) return mb.toFixed(mb < 10 ? 1 : 0) + " MB";
+  return (mb / 1024).toFixed(2) + " GB";
+}
+
+// Pure: the host-drawn header over the view (api.ui.setViewHeader, host
+// >= 1.0.77). It replaces the toolbar this view used to pin at the top: the
+// scan summary becomes the subtitle, the Scan/Rescan button becomes the header
+// action, and a one-word status says what the last scan found. `s` is
+// { loading, scanned, error, groups, extras, reclaimable } (counts, not arrays).
+function viewHeaderFor(s) {
+  var scan = {
+    label: s.loading ? "Scanning…" : (s.scanned ? "Rescan" : "Scan library"),
+    action: "rescan",
+    variant: "accent",
+    disabled: !!s.loading,
+  };
+  if (s.loading) {
+    return { subtitle: "Scanning your library for duplicate songs", status: { variant: "muted", label: "Scanning…" }, actions: [scan] };
+  }
+  if (s.error) {
+    return { subtitle: s.error, status: { variant: "error", label: "Scan failed" }, actions: [scan] };
+  }
+  if (!s.scanned) {
+    return { subtitle: "Not scanned yet", status: null, actions: [scan] };
+  }
+  if (!s.groups) {
+    return { subtitle: "No duplicates found", status: { variant: "success", label: "Clean" }, actions: [scan] };
+  }
+  return {
+    subtitle: s.groups + " duplicate group" + (s.groups === 1 ? "" : "s") +
+      " · " + s.extras + " extra cop" + (s.extras === 1 ? "y" : "ies") +
+      " · " + fmtBytes(s.reclaimable) + " reclaimable",
+    status: null,
+    actions: [scan],
+  };
+}
+
 function activate(api) {
   var VIEW = "duplicate-finder";
 
@@ -26,16 +69,6 @@ function activate(api) {
   };
 
   // ---- formatting -------------------------------------------------------
-
-  function fmtBytes(n) {
-    if (!n || n <= 0) return "—";
-    if (n < 1024) return n + " B";
-    var kb = n / 1024;
-    if (kb < 1024) return kb.toFixed(0) + " KB";
-    var mb = kb / 1024;
-    if (mb < 1024) return mb.toFixed(mb < 10 ? 1 : 0) + " MB";
-    return (mb / 1024).toFixed(2) + " GB";
-  }
 
   function fmtDuration(secs) {
     if (secs == null || isNaN(secs)) return "";
@@ -161,10 +194,32 @@ function activate(api) {
     };
   }
 
+  // Hosts with the view header draw the title, summary and Scan button there;
+  // older ones (no setViewHeader) keep the pinned toolbar below.
+  var hasViewHeader = !!(api.ui && typeof api.ui.setViewHeader === "function");
+
+  // Sends the header only when it changed: each setViewHeader re-renders the
+  // host, and render() runs on every toggle / scan step. Runtime header state
+  // is dropped on reload, so the first render() after activate always pushes.
+  var lastViewHeader = null;
+  function pushViewHeader() {
+    if (!hasViewHeader) return;
+    var s = summary();
+    var header = viewHeaderFor({
+      loading: state.loading, scanned: state.scanned, error: state.error,
+      groups: s.groups, extras: s.extras, reclaimable: s.reclaimable,
+    });
+    var key = JSON.stringify(header);
+    if (key === lastViewHeader) return;
+    lastViewHeader = key;
+    api.ui.setViewHeader(VIEW, header);
+  }
+
   function render() {
     var children = [];
+    pushViewHeader();
 
-    children.push({
+    if (!hasViewHeader) children.push({
       type: "toolbar",
       title: "Duplicate Finder",
       buttons: [{
@@ -179,7 +234,7 @@ function activate(api) {
 
     // The toolbar is pinned (hoisted out of the scroll area), so the first
     // content node sits flush against its border — add a little breathing room.
-    children.push({ type: "spacer" });
+    if (!hasViewHeader) children.push({ type: "spacer" });
 
     children.push({
       type: "section",
@@ -366,4 +421,4 @@ function activate(api) {
 
 function deactivate() {}
 
-return { activate: activate, deactivate: deactivate };
+return { activate: activate, deactivate: deactivate, _viewHeaderFor: viewHeaderFor };
